@@ -5,6 +5,7 @@ use crate::{Config, IndexType, LabelDisplay};
 
 use super::draw::{self, StreamAwareFmt, StreamType, WrappedWriter};
 use super::{Cache, CharSet, LabelAttach, Report, ReportStyle, Show, Span, Write};
+use yansi::Color;
 
 // A WARNING, FOR ALL YE WHO VENTURE IN HERE
 //
@@ -982,6 +983,84 @@ impl<S: Span, K: ReportStyle> Report<S, K> {
                 }
             }
         }
+
+        // Suggestions (rendered after all groups to avoid borrow conflicts with cache)
+        if !self.suggestions.is_empty() {
+            for suggestion in &self.suggestions {
+                let sug_src_id = suggestion.span.source();
+                if let Ok(sug_src) = cache.fetch(sug_src_id) {
+                    let start = suggestion.span.start();
+                    if let Some((line, line_idx, col)) = sug_src.get_offset_line(start) {
+                        let end = suggestion.span.end();
+                        let sug_len = end.saturating_sub(start);
+                        let line_text = sug_src.get_line_text(line).unwrap_or("");
+
+                        let byte_col = col;
+                        let before = if byte_col <= line_text.len() {
+                            &line_text[..byte_col]
+                        } else {
+                            line_text
+                        };
+                        let after_offset = (byte_col + sug_len).min(line_text.len());
+                        let after = &line_text[after_offset..];
+                        let replaced_line =
+                            format!("{}{}{}", before, suggestion.replacement, after);
+
+                        let header = if let Some(ref msg) = suggestion.message {
+                            format!("Suggestion: {}", msg)
+                        } else {
+                            "Suggestion".to_string()
+                        };
+
+                        // Margin helper (simplified — no write_margin closure available here)
+                        let margin = format!(
+                            "{}{}",
+                            Show((' ', line_no_width + 2)),
+                            draw.vbar,
+                        );
+                        let mc = self.config.margin_color();
+                        let sug_color = self.config.filter_color(Some(Color::Cyan));
+
+                        if !self.config.compact {
+                            writeln!(w, "{}", margin.as_str().fg(mc, s))?;
+                        }
+                        writeln!(
+                            w,
+                            "{} {}",
+                            margin.as_str().fg(mc, s),
+                            header.as_str().fg(sug_color, s),
+                        )?;
+                        if !self.config.compact {
+                            writeln!(w, "{}", margin.as_str().fg(mc, s))?;
+                        }
+
+                        // Replaced source line
+                        let display_line = line_idx + 1;
+                        writeln!(
+                            w,
+                            "{:>width$} {} {}",
+                            display_line,
+                            draw.vbar.fg(mc, s),
+                            replaced_line.trim_end(),
+                            width = line_no_width,
+                        )?;
+
+                        // Underline with + markers
+                        let marker_len = suggestion.replacement.len().max(1);
+                        let underline: String = (0..byte_col + marker_len)
+                            .map(|i| if i >= byte_col { '+' } else { ' ' })
+                            .collect();
+                        writeln!(
+                            w,
+                            "{} {}",
+                            margin.as_str().fg(mc, s),
+                            underline.as_str().fg(sug_color, s),
+                        )?;
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -1798,5 +1877,62 @@ mod tests {
            | `-------- multi 1
         ---'
         "###)
+    }
+
+    #[test]
+    fn suggestion_rendering() {
+        let source = "apple == orange;";
+        let msg = remove_trailing(
+            Report::build(ReportKind::Error, 0..0)
+                .with_config(no_color_and_ascii())
+                .with_message("can't compare apples with oranges")
+                .with_label(Label::new(0..5).with_message("This is an apple"))
+                .with_suggestion(crate::Suggestion {
+                    span: 0..5,
+                    replacement: "orange".to_string(),
+                    message: Some("replace with an orange".to_string()),
+                })
+                .finish()
+                .write_to_string(Source::from(source)),
+        );
+        assert_snapshot!(msg, @r###"
+        Error: can't compare apples with oranges
+           ,-[ <unknown>:1:1 ]
+           |
+         1 | apple == orange;
+           | -----
+           |   `---- This is an apple
+        ---'
+           |
+           | Suggestion: replace with an orange
+           |
+        1 | orange == orange;
+           | ++++++
+        "###);
+    }
+
+    #[test]
+    fn suggestion_no_message() {
+        let source = "let x = 42;";
+        let msg = remove_trailing(
+            Report::build(ReportKind::Error, 0..0)
+                .with_config(no_color_and_ascii())
+                .with_message("wrong value")
+                .with_suggestion(crate::Suggestion {
+                    span: 8..10,
+                    replacement: "99".to_string(),
+                    message: None,
+                })
+                .finish()
+                .write_to_string(Source::from(source)),
+        );
+        assert_snapshot!(msg, @r###"
+        Error: wrong value
+          |
+          | Suggestion
+          |
+        1 | let x = 99;
+          |         ++
+        "###);
     }
 }

@@ -199,6 +199,17 @@ impl<S: Span> Label<S> {
     }
 }
 
+/// A suggested source fix: replace text at `span` with `replacement`.
+#[derive(Debug, Clone)]
+pub struct Suggestion<S: Span> {
+    /// The span of source to replace.
+    pub span: S,
+    /// The replacement text.
+    pub replacement: String,
+    /// An optional message describing the suggestion.
+    pub message: Option<String>,
+}
+
 /// A type representing a diagnostic that is ready to be written to output.
 #[must_use = "call `.print()` or `.eprint()` to print the report"]
 pub struct Report<S: Span = Range<usize>, K: ReportStyle = ReportKind> {
@@ -207,6 +218,7 @@ pub struct Report<S: Span = Range<usize>, K: ReportStyle = ReportKind> {
     msg: Option<String>,
     notes: Vec<String>,
     help: Vec<String>,
+    suggestions: Vec<Suggestion<S>>,
     span: S,
     labels: Vec<Label<S>>,
     config: Config,
@@ -223,6 +235,7 @@ impl<S: Span, K: ReportStyle> Report<S, K> {
             msg: None,
             notes: vec![],
             help: vec![],
+            suggestions: vec![],
             span,
             labels: Vec::new(),
             config: Config::default(),
@@ -251,6 +264,7 @@ impl<S: Span, K: ReportStyle> fmt::Debug for Report<S, K> {
             .field("msg", &self.msg)
             .field("notes", &self.notes)
             .field("help", &self.help)
+            .field("suggestions_count", &self.suggestions.len())
             .field("config", &self.config)
             .finish()
     }
@@ -347,6 +361,7 @@ pub struct ReportBuilder<S: Span, K: ReportStyle> {
     msg: Option<String>,
     notes: Vec<String>,
     help: Vec<String>,
+    suggestions: Vec<Suggestion<S>>,
     span: S,
     labels: Vec<Label<S>>,
     config: Config,
@@ -416,6 +431,17 @@ impl<S: Span, K: ReportStyle> ReportBuilder<S, K> {
         self
     }
 
+    /// Add a suggested fix to the report.
+    pub fn add_suggestion(&mut self, suggestion: Suggestion<S>) {
+        self.suggestions.push(suggestion);
+    }
+
+    /// Add a suggested fix to the report (builder-style).
+    pub fn with_suggestion(mut self, suggestion: Suggestion<S>) -> Self {
+        self.suggestions.push(suggestion);
+        self
+    }
+
     /// Add a label to the report.
     pub fn add_label(&mut self, label: Label<S>) {
         self.add_labels(std::iter::once(label));
@@ -456,6 +482,7 @@ impl<S: Span, K: ReportStyle> ReportBuilder<S, K> {
             msg: self.msg,
             notes: self.notes,
             help: self.help,
+            suggestions: self.suggestions,
             span: self.span,
             labels: self.labels,
             config: self.config,
@@ -471,6 +498,7 @@ impl<S: Span, K: ReportStyle> fmt::Debug for ReportBuilder<S, K> {
             .field("msg", &self.msg)
             .field("notes", &self.notes)
             .field("help", &self.help)
+            .field("suggestions_count", &self.suggestions.len())
             .field("config", &self.config)
             .finish()
     }
