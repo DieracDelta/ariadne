@@ -806,7 +806,24 @@ impl<S: Span, K: ReportStyle> Report<S, K> {
                                     tail.fg(vbar_ll.label.display_info.color, s),
                                 ]
                             } else if let Some(underline_ll) = underline {
-                                [draw.underline.fg(underline_ll.label.display_info.color, s); 2]
+                                let [c, tail] = if ExactSizeIterator::len(
+                                    &underline_ll.label.char_span,
+                                ) <= 1
+                                {
+                                    [draw.underbar_single, draw.underline]
+                                } else if line.offset() + col
+                                    == underline_ll.label.char_span.start
+                                {
+                                    [draw.lunderbar, draw.underline]
+                                } else if line.offset() + col == underline_ll.label.last_offset() {
+                                    [draw.runderbar, draw.underline]
+                                } else {
+                                    [draw.underline, draw.underline]
+                                };
+                                [
+                                    c.fg(underline_ll.label.display_info.color, s),
+                                    tail.fg(underline_ll.label.display_info.color, s),
+                                ]
                             } else {
                                 [' '.fg(None, s); 2]
                             };
@@ -1079,7 +1096,8 @@ mod tests {
     use insta::assert_snapshot;
 
     use crate::{
-        Cache, CharSet, Config, IndexType, Label, Report, ReportKind, ReportStyle, Source, Span,
+        Cache, CharSet, Config, IndexType, Label, LabelAttach, Report, ReportKind, ReportStyle,
+        Source, Span,
     };
 
     impl<S: Span, K: ReportStyle> Report<S, K> {
@@ -1096,6 +1114,12 @@ mod tests {
             // Using Ascii so that the inline snapshots display correctly
             // even with fonts where characters like '┬' take up more space.
             .with_char_set(CharSet::Ascii)
+    }
+
+    fn no_color_and_unicode() -> Config {
+        Config::default()
+            .with_color(false)
+            .with_char_set(CharSet::Unicode)
     }
 
     fn remove_trailing(s: String) -> String {
@@ -1133,6 +1157,28 @@ mod tests {
          1 | apple == orange;
            | -----    ------
         ---'
+        "###);
+    }
+
+    #[test]
+    fn unicode_inline_underlines_mark_span_boundaries() {
+        let source = "Copy  ASMMSP";
+        let msg = remove_trailing(
+            Report::build(ReportKind::Error, 0..0)
+                .with_config(no_color_and_unicode().with_label_attach(LabelAttach::Middle))
+                .with_message("COPY member could not be resolved")
+                .with_label(Label::new(0..12).with_message("failed to read source file"))
+                .finish()
+                .write_to_string(Source::from(source)),
+        );
+        assert_snapshot!(msg, @r###"
+        Error: COPY member could not be resolved
+           ╭─┤ <unknown>:1:1 │
+           │
+         1 ┤ Copy  ASMMSP
+           │ ┌─────┬────┐
+           │       ╰─────── failed to read source file
+        ───╯
         "###);
     }
 
