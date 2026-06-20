@@ -37,6 +37,22 @@ impl LabelInfo<'_> {
             .max(self.char_span.start)
     }
 
+    fn underline_span(&self) -> Range<usize> {
+        if ExactSizeIterator::len(&self.char_span) <= 1 {
+            self.char_span.clone()
+        } else {
+            self.char_span.start.saturating_sub(1)..self.char_span.end.saturating_add(1)
+        }
+    }
+
+    fn underline_last_offset(&self) -> usize {
+        let underline_span = self.underline_span();
+        underline_span
+            .end
+            .saturating_sub(1)
+            .max(underline_span.start)
+    }
+
     fn display_range(&self, config: &Config) -> Range<usize> {
         self.start_line.saturating_sub(config.context_lines)
             ..self.end_line + config.context_lines + 1
@@ -708,7 +724,7 @@ impl<S: Span, K: ReportStyle> Report<S, K> {
                             self.config.underlines
                         // Underlines only occur for inline spans (highlighting can occur for all spans)
                         && ll.multi.is_none()
-                        && ll.label.char_span.contains(&(line.offset() + col))
+                        && ll.label.underline_span().contains(&(line.offset() + col))
                         })
                         // Prioritise displaying smaller spans
                         .min_by_key(|ll| {
@@ -786,9 +802,13 @@ impl<S: Span, K: ReportStyle> Report<S, K> {
                                 let [c, tail] = if underline.is_some() {
                                     if ExactSizeIterator::len(&vbar_ll.label.char_span) <= 1 {
                                         [draw.underbar_single, draw.underline]
-                                    } else if line.offset() + col == vbar_ll.label.char_span.start {
+                                    } else if line.offset() + col
+                                        == vbar_ll.label.underline_span().start
+                                    {
                                         [draw.lunderbar, draw.munderbar]
-                                    } else if line.offset() + col == vbar_ll.label.last_offset() {
+                                    } else if line.offset() + col
+                                        == vbar_ll.label.underline_last_offset()
+                                    {
                                         [draw.runderbar, draw.munderbar]
                                     } else {
                                         [draw.munderbar, draw.underline]
@@ -812,11 +832,13 @@ impl<S: Span, K: ReportStyle> Report<S, K> {
                                 {
                                     [draw.underbar_single, draw.underline]
                                 } else if line.offset() + col
-                                    == underline_ll.label.char_span.start
+                                    == underline_ll.label.underline_span().start
                                 {
-                                    [draw.lunderbar, draw.underline]
-                                } else if line.offset() + col == underline_ll.label.last_offset() {
-                                    [draw.runderbar, draw.underline]
+                                    [draw.lbot, draw.underline]
+                                } else if line.offset() + col
+                                    == underline_ll.label.underline_last_offset()
+                                {
+                                    [draw.rbot, draw.underline]
                                 } else {
                                     [draw.underline, draw.underline]
                                 };
@@ -1162,12 +1184,12 @@ mod tests {
 
     #[test]
     fn unicode_inline_underlines_mark_span_boundaries() {
-        let source = "Copy  ASMMSP";
+        let source = " Copy  ASMMSP";
         let msg = remove_trailing(
             Report::build(ReportKind::Error, 0..0)
                 .with_config(no_color_and_unicode().with_label_attach(LabelAttach::Middle))
                 .with_message("COPY member could not be resolved")
-                .with_label(Label::new(0..12).with_message("failed to read source file"))
+                .with_label(Label::new(1..13).with_message("failed to read source file"))
                 .finish()
                 .write_to_string(Source::from(source)),
         );
@@ -1175,9 +1197,9 @@ mod tests {
         Error: COPY member could not be resolved
            ╭─┤ <unknown>:1:1 │
            │
-         1 ┤ Copy  ASMMSP
-           │ ┌─────┬────┐
-           │       ╰─────── failed to read source file
+         1 ┤  Copy  ASMMSP
+           │ ╰──────┬─────╯
+           │        ╰─────── failed to read source file
         ───╯
         "###);
     }
